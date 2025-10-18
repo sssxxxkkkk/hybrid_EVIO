@@ -30,17 +30,6 @@ def make_evo_traj_gt(poses_N_x_7, tss_us):
         timestamps=tss_us)#转换为秒
     return traj_evo
 
-# def make_evo_traj_deio(poses_N_x_7, tss_us):
-#     assert poses_N_x_7.shape[1] == 7
-#     assert poses_N_x_7.shape[0] > 10
-#     assert tss_us.shape[0] == poses_N_x_7.shape[0]
-
-#     traj_evo = PoseTrajectory3D(
-#         positions_xyz=poses_N_x_7[:,:3],
-#         # orientations_quat_wxyz=poses_N_x_7[:,3:],
-#         orientations_quat_wxyz = poses_N_x_7[:, [5,6,3,4]],#存储的是yzwx(由于原代码的bug导致的,注意统一代码输出为xyzw而evo中需要用的是wxyz即可)
-#         timestamps=tss_us/1e6)#转换为秒
-#     return traj_evo
 
 def load_gt_us(path, skiprows=0):
     traj_ref = np.loadtxt(path, delimiter=" ", skiprows=skiprows)
@@ -128,7 +117,7 @@ for root, dirs, files in os.walk(indir):
             # 获取轨迹
             tss_gt_us, traj_gt = load_gt_us(os.path.join(datapath_val, f"stamped_groundtruth.txt"))#获取真实轨迹
 
-            # 获取deio估算的轨迹
+            # 获取hybrid-估算的轨迹
             tss_deio_us, traj_deio = load_gt_us(os.path.join(datapath_val, f"stamped_traj_estimate.txt"))
             evoGT = make_evo_traj_gt(traj_gt, tss_gt_us)
             evoEst = make_evo_traj_gt(traj_deio, tss_deio_us)
@@ -198,7 +187,7 @@ for root, dirs, files in os.walk(indir):
             # 获取轨迹
             tss_gt_us, traj_gt = load_gt_us(os.path.join(datapath_val, f"stamped_groundtruth.txt"))#获取真实轨迹
 
-            # 获取deio估算的轨迹
+            # 获取hybrid-evio估算的轨迹
             tss_deio_us, traj_deio = load_gt_us(os.path.join(datapath_val, f"stamped_traj_estimate.txt")) 
 
             evoGT = make_evo_traj_gt(traj_gt, tss_gt_us)
@@ -252,7 +241,7 @@ for root, dirs, files in os.walk(indir):
             # 获取轨迹
             tss_gt_us, traj_gt = load_gt_us(os.path.join(datapath_val, f"stamped_groundtruth.txt"))#获取真实轨迹
 
-            # 获取deio估算的轨迹
+            # 获取hybrid-evio估算的轨迹
             tss_deio_us, traj_deio = load_gt_us(os.path.join(datapath_val, f"stamped_traj_estimate.txt")) 
 
             evoGT = make_evo_traj_gt(traj_gt, tss_gt_us)
@@ -278,3 +267,59 @@ for root, dirs, files in os.walk(indir):
     break
 
 print(f"Mean MPE[%]: {mean_ape_err/sequence_num:.02f}")
+
+
+
+print("Evaluation for EDS dataset")
+sequence_num = 0
+mpe_err = 0
+ate_err = 0
+
+target_dirs = {
+                "peanuts_dark",
+                "peanuts_light",
+                "rocket_dark",
+                "ziggy_flying_pieces",
+                }
+target_dirs = {d + suffix for d in target_dirs}
+
+
+for root, dirs, files in os.walk(indir):
+    for d in dirs:
+        # 构建完整路径 data_path
+        datapath_val = os.path.join(root, d)
+
+        # 检查是否为目标文件夹之一
+        if os.path.basename(datapath_val) in target_dirs:
+            sequence_name = os.path.basename(datapath_val)
+
+            # 获取轨迹
+            tss_gt_us, traj_gt = load_gt_us(os.path.join(datapath_val, f"stamped_groundtruth.txt"))#获取真实轨迹
+
+            # 获取hybrid-evio估算的轨迹
+            tss_deio_us, traj_deio = load_gt_us(os.path.join(datapath_val, f"stamped_traj_estimate.txt")) 
+
+            evoGT = make_evo_traj_gt(traj_gt, tss_gt_us)
+            evoEst = make_evo_traj_gt(traj_deio, tss_deio_us)
+            gtlentraj = evoGT.get_infos()["path length (m)"]#获取轨迹长度
+            evoGT, evoEst = sync.associate_trajectories(evoGT, evoEst, max_diff=1)
+            _n_to_align=-1;
+            ape_trans = main_ape.ape(copy.deepcopy(evoGT), copy.deepcopy(evoEst), pose_relation=metrics.PoseRelation.translation_part, align=True,n_to_align=_n_to_align, correct_scale=True)
+
+            # print(f"\033[31m EVO结果：{ape_trans}\033[0m");
+            MPE = ape_trans.stats["mean"] / gtlentraj * 100
+            # print(f"MPE is {MPE:.02f}") #注意只保留两位小数
+            evoATE = ape_trans.stats["rmse"]*100
+
+            res_str = f"\nATE[cm]: {evoATE:.02f} | MPE[%/m]: {MPE:.02f}"
+            
+            sequence_num += 1
+            mpe_err += MPE
+            ate_err += evoATE
+
+            print(f"{sequence_name}: {res_str}")
+            
+    # 使用break限制os.walk只遍历indir的第一层
+    break
+print(f"Mean ATE[cm]: {ate_err/sequence_num:.02f}")    
+print(f"Mean MPE[%]: {mpe_err/sequence_num:.02f}")
